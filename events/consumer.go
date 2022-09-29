@@ -37,9 +37,22 @@ func (consumer *Consumer) setup() error {
 	return declareExchange(channel)
 }
 
-type Payload struct{
+type LogPayload struct{
 	Name string `json:"name"`
 	Data string `json:"data"`
+}
+
+type MailPayload struct{
+	From string `json:"from"`
+	To string `json:"to"`
+	Subject string `json:"subject"`
+	Message string `json:"message"`
+}
+
+type RequstPayload struct{
+	Action string `json:"action"`
+	Log LogPayload `json:"log,omitempty"`
+	Mail MailPayload `json:"mail,omitempty"`
 }
 
 func (consumer *Consumer) Listen(topics []string) error {
@@ -77,7 +90,7 @@ func (consumer *Consumer) Listen(topics []string) error {
 	forever := make(chan bool)
 	go func() {
 		for d := range messages{
-			var payload Payload
+			var payload RequstPayload
 			_ = json.Unmarshal(d.Body, &payload)
 
 			go handlePayload(payload)
@@ -90,27 +103,58 @@ func (consumer *Consumer) Listen(topics []string) error {
 	return nil
 }
 
-func handlePayload(payload Payload) {
-	switch payload.Name {
+func handlePayload(payload RequstPayload) {
+	switch payload.Action {
 	case "log", "event":
 		//log whatever we get
-		err := logEvent(payload)
+		err := logEvent(payload.Log)
 		if err != nil {
 			log.Println(err)
 		}
-	case "auth":
-		// authenticate
+	case "mail":
+		// mail service
+		err := mailEvent(payload.Mail)
+		if err != nil {
+			log.Println(err)
+		}
 
 	//you can have as many as cases you want, as long as you write the logic
 	default: 
-		err := logEvent(payload)
+		err := logEvent(payload.Log)
 		if err != nil {
 			log.Println(err)
 		}
 	}
 }
 
-func logEvent(entry Payload) error {
+func mailEvent(entry MailPayload) error {
+	jsonData, _ := json.MarshalIndent(entry, "", "\t")
+
+	mailServiceUrl := "http://mail-service/send"
+
+	request, err := http.NewRequest("POST", mailServiceUrl, bytes.NewBuffer(jsonData))
+	if err != nil {
+		return err
+	}
+
+	request.Header.Set("Content-Type","application/json")
+
+	client := http.Client{}
+
+	response, err := client.Do(request)
+	if err != nil {
+		return err
+	}
+	defer response.Body.Close()
+
+	if response.StatusCode != http.StatusAccepted{
+		return err
+	}
+
+	return nil
+}
+
+func logEvent(entry LogPayload) error {
 	jsonData, _ := json.MarshalIndent(entry, "", "\t")
 
 	logServiceUrl := "http://logger-service/log"
